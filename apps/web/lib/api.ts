@@ -1,0 +1,1 @@
+'use client'; export async function api<T=any>(path:string,init:RequestInit={}){const res=await fetch('/api/backend'+path,{...init,headers:{'content-type':'application/json',...(init.headers||{})}});const body=await res.json().catch(()=>({error:{message:'응답을 읽지 못했습니다.'}}));if(!res.ok)throw new Error(body.error?.message||'요청에 실패했습니다.');return body as T}
