@@ -1,0 +1,1 @@
+import {redirect}from'next/navigation';import{hasSession}from'@/lib/session';import Shell from'@/components/shell';export default async function Layout({children}:{children:React.ReactNode}){if(!await hasSession())redirect('/login');return <Shell>{children}</Shell>}

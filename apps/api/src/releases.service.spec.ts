@@ -1,0 +1,2 @@
+import {progress} from './releases.service'; import {ItemResult} from './generated/prisma/client';
+describe('release progress',()=>{it('counts only PASS and NA',()=>{expect(progress([{result:ItemResult.PASS},{result:ItemResult.NA},{result:ItemResult.ISSUE},{result:ItemResult.PENDING}])).toEqual({done:2,total:4,percent:50})});it('handles empty',()=>expect(progress([])).toEqual({done:0,total:0,percent:0}))});

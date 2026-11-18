@@ -1,0 +1,1 @@
+import{test,expect}from'@playwright/test';test('login screen is accessible',async({page})=>{await page.goto('/login');await expect(page.getByRole('heading',{name:'Release Check'})).toBeVisible();await expect(page.getByLabel('공통 비밀번호')).toBeVisible()});

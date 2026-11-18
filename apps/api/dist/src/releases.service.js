@@ -1,0 +1,70 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ReleasesService = void 0;
+exports.progress = progress;
+// Prisma transaction relation payloads are runtime-validated; null branches terminate through fail().
+// @ts-nocheck
+const common_1 = require("@nestjs/common");
+const crypto_1 = require("crypto");
+const prisma_1 = require("./prisma");
+const common_2 = require("./common");
+const include = { items: { orderBy: [{ phase: 'asc' }, { sortOrder: 'asc' }] } };
+function progress(items) { const done = items.filter(x => x.result === 'PASS' || x.result === 'NA').length; return { done, total: items.length, percent: items.length ? Math.floor(done / items.length * 100) : 0 }; }
+let ReleasesService = class ReleasesService {
+    db;
+    constructor(db) {
+        this.db = db;
+    }
+    view(r) { const pre = r.items.filter((x) => x.phase === 'PRE'), p = progress(r.items); return { ...r, scheduledDate: r.scheduledDate.toISOString().slice(0, 10), progress: p, preReady: pre.every((x) => x.result === 'PASS' || x.result === 'NA'), canComplete: r.items.length > 0 && p.done === p.total && r.status !== 'COMPLETED' }; }
+    async list(q) { const page = Math.max(1, +q.page || 1), pageSize = Math.min(100, Math.max(1, +q.pageSize || 20)); const where = {}; if (q.status)
+        where.status = q.status; if (q.siteId)
+        where.siteId = q.siteId; if (q.q)
+        where.OR = ['title', 'ownerName', 'siteNameSnapshot'].map(k => ({ [k]: { contains: String(q.q).trim(), mode: 'insensitive' } })); const [rows, total] = await Promise.all([this.db.release.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }), this.db.release.count({ where })]); return { data: rows.map(r => ({ ...r, scheduledDate: r.scheduledDate.toISOString().slice(0, 10) })), meta: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) } }; }
+    async get(id) { const r = await this.db.release.findUnique({ where: { id }, include }); if (!r)
+        (0, common_2.fail)(404, 'NOT_FOUND', '배포를 찾을 수 없습니다.'); return this.view(r); }
+    async create(key, d) {
+        if (!/^[0-9a-f-]{36}$/i.test(key || ''))
+            (0, common_2.fail)(400, 'VALIDATION_ERROR', '올바른 Idempotency-Key가 필요합니다.');
+        const normalized = { ...d, title: d.title.trim(), versionLabel: d.versionLabel.trim(), ownerName: d.ownerName.trim(), description: d.description?.trim() || null };
+        const hash = (0, crypto_1.createHash)('sha256').update(JSON.stringify(normalized)).digest('hex');
+        const old = await this.db.release.findUnique({ where: { createKey: key }, include });
+        if (old) {
+            if (old.createPayloadHash !== hash)
+                (0, common_2.fail)(409, 'IDEMPOTENCY_KEY_REUSED', '이미 다른 요청에 사용된 키입니다.');
+            return { created: false, data: this.view(old) };
+        }
+        const data = await this.db.$transaction(async (tx) => { const site = await tx.site.findUnique({ where: { id: d.siteId } }); if (!site)
+            (0, common_2.fail)(404, 'NOT_FOUND', '사이트를 찾을 수 없습니다.'); if (site.archivedAt)
+            (0, common_2.fail)(409, 'SITE_ARCHIVED', '보관된 사이트입니다.'); const templates = await tx.templateItem.findMany({ where: { active: true, OR: [{ siteId: null }, { siteId: d.siteId }] }, orderBy: [{ phase: 'asc' }, { siteId: 'asc' }, { sortOrder: 'asc' }, { id: 'asc' }] }); const pre = templates.filter(x => x.phase === 'PRE'), post = templates.filter(x => x.phase === 'POST'); if (!pre.length || !post.length || templates.length > 100)
+            (0, common_2.fail)(409, 'TEMPLATE_INVALID', 'PRE/POST 항목이 각각 필요하며 총 100개 이하여야 합니다.'); const ordered = [...pre, ...post]; return tx.release.create({ data: { createKey: key, createPayloadHash: hash, siteId: d.siteId, siteNameSnapshot: site.name, title: normalized.title, versionLabel: normalized.versionLabel, ownerName: normalized.ownerName, description: normalized.description, scheduledDate: new Date(d.scheduledDate + 'T00:00:00Z'), items: { create: ordered.map((x, i) => ({ templateItemId: x.id, phase: x.phase, label: x.label, sortOrder: i })) }, events: { create: { type: 'CREATED', actorId: 'demo-user', after: { title: normalized.title } } } }, include }); });
+        return { created: true, data: this.view(data) };
+    }
+    async updateItem(id, itemId, d) { const result = await this.db.$transaction(async (tx) => { await tx.$queryRaw `SELECT id FROM "Release" WHERE id=${id}::uuid FOR UPDATE`; const r = await tx.release.findUnique({ where: { id }, include }); if (!r)
+        (0, common_2.fail)(404, 'NOT_FOUND', '배포를 찾을 수 없습니다.'); if (r.status === 'COMPLETED')
+        (0, common_2.fail)(409, 'RELEASE_LOCKED', '완료된 배포는 수정할 수 없습니다.'); if (r.revision !== d.revision)
+        (0, common_2.fail)(409, 'REVISION_CONFLICT', '다른 창에서 변경됐습니다. 최신 내용을 확인해 주세요.'); const item = r.items.find(x => x.id === itemId); if (!item)
+        (0, common_2.fail)(404, 'NOT_FOUND', '점검 항목을 찾을 수 없습니다.'); if ((d.result === 'NA' || d.result === 'ISSUE') && !d.note.trim())
+        (0, common_2.fail)(400, 'NOTE_REQUIRED', '해당 없음 또는 문제 발생에는 메모가 필요합니다.'); const preReady = r.items.filter(x => x.phase === 'PRE').every(x => x.result === 'PASS' || x.result === 'NA'); if (item.phase === 'POST' && !preReady)
+        (0, common_2.fail)(409, 'PRECHECK_REQUIRED', '배포 전 점검을 먼저 완료해 주세요.'); if (item.result === d.result && item.note === d.note)
+        return r; await tx.releaseItem.update({ where: { id: itemId }, data: { result: d.result, note: d.note, checkedAt: new Date(), checkedBy: '실습 사용자' } }); const items = await tx.releaseItem.findMany({ where: { releaseId: id } }); const status = items.some(x => x.result === 'ISSUE') ? 'BLOCKED' : 'IN_PROGRESS'; await tx.release.update({ where: { id }, data: { status, revision: { increment: 1 } } }); await tx.releaseEvent.create({ data: { releaseId: id, itemId, type: 'ITEM_UPDATED', actorId: 'demo-user', before: { result: item.result, note: item.note }, after: { result: d.result, note: d.note } } }); return tx.release.findUniqueOrThrow({ where: { id }, include }); }); return this.view(result); }
+    async complete(id, revision) { const r = await this.db.$transaction(async (tx) => { await tx.$queryRaw `SELECT id FROM "Release" WHERE id=${id}::uuid FOR UPDATE`; const cur = await tx.release.findUnique({ where: { id }, include }); if (!cur)
+        (0, common_2.fail)(404, 'NOT_FOUND', '배포를 찾을 수 없습니다.'); if (cur.status === 'COMPLETED')
+        return cur; if (cur.revision !== revision)
+        (0, common_2.fail)(409, 'REVISION_CONFLICT', '다른 창에서 변경됐습니다. 최신 내용을 확인해 주세요.'); if (!cur.items.length || cur.items.some(x => x.result !== 'PASS' && x.result !== 'NA'))
+        (0, common_2.fail)(409, 'RELEASE_NOT_READY', '미점검 또는 문제 항목을 확인해 주세요.'); await tx.release.update({ where: { id }, data: { status: 'COMPLETED', completedAt: new Date(), revision: { increment: 1 } } }); await tx.releaseEvent.create({ data: { releaseId: id, type: 'COMPLETED', actorId: 'demo-user', after: { status: 'COMPLETED' } } }); return tx.release.findUniqueOrThrow({ where: { id }, include }); }); return this.view(r); }
+};
+exports.ReleasesService = ReleasesService;
+exports.ReleasesService = ReleasesService = __decorate([
+    (0, common_1.Injectable)(),
+    __metadata("design:paramtypes", [prisma_1.PrismaService])
+], ReleasesService);
+//# sourceMappingURL=releases.service.js.map

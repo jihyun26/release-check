@@ -1,0 +1,1 @@
+import 'dotenv/config'; import {spawnSync} from 'node:child_process'; if(!process.env.DIRECT_URL)throw new Error('DIRECT_URL is required for migrations');process.exit(spawnSync('npx',['prisma','migrate','deploy'],{stdio:'inherit',shell:true}).status??1);

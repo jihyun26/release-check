@@ -1,0 +1,1 @@
+import {NextRequest,NextResponse} from 'next/server';export async function POST(req:NextRequest){if(req.headers.get('origin')!==process.env.APP_ORIGIN)return NextResponse.json({error:{message:'잘못된 요청 출처입니다.'}},{status:403});const r=NextResponse.json({data:{ok:true}});r.cookies.set('release_check_session','',{path:'/',maxAge:0});return r}

@@ -1,0 +1,107 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+datasource db {
+  provider = "postgresql"
+}
+enum Phase {
+  PRE
+  POST
+}
+enum ItemResult {
+  PENDING
+  PASS
+  NA
+  ISSUE
+}
+enum ReleaseStatus {
+  PLANNED
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+enum EventType {
+  CREATED
+  ITEM_UPDATED
+  COMPLETED
+}
+model Site {
+  id String @id @default(uuid()) @db.Uuid
+  name String @db.VarChar(50)
+  description String? @db.VarChar(200)
+  archivedAt DateTime? @db.Timestamptz
+  revision Int @default(1)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  templates TemplateItem[]
+  releases Release[]
+  @@index([archivedAt])
+}
+model TemplateItem {
+  id String @id @default(uuid()) @db.Uuid
+  siteId String? @db.Uuid
+  site Site? @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  phase Phase
+  label String @db.VarChar(150)
+  sortOrder Int @default(0)
+  active Boolean @default(true)
+  revision Int @default(1)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  releaseItems ReleaseItem[]
+  @@index([siteId, active, phase, sortOrder])
+}
+model Release {
+  id String @id @default(uuid()) @db.Uuid
+  createKey String @unique @db.Uuid
+  createPayloadHash String @db.VarChar(64)
+  siteId String @db.Uuid
+  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  siteNameSnapshot String @db.VarChar(50)
+  title String @db.VarChar(80)
+  versionLabel String @db.VarChar(30)
+  ownerName String @db.VarChar(30)
+  description String? @db.Text
+  scheduledDate DateTime @db.Date
+  status ReleaseStatus @default(PLANNED)
+  revision Int @default(1)
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+  completedAt DateTime? @db.Timestamptz
+  items ReleaseItem[]
+  events ReleaseEvent[]
+  @@index([status, createdAt])
+  @@index([siteId, createdAt])
+  @@index([completedAt])
+}
+model ReleaseItem {
+  id String @id @default(uuid()) @db.Uuid
+  releaseId String @db.Uuid
+  release Release @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  templateItemId String? @db.Uuid
+  templateItem TemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: Restrict)
+  phase Phase
+  label String @db.VarChar(150)
+  sortOrder Int
+  result ItemResult @default(PENDING)
+  note String @default("") @db.Text
+  checkedAt DateTime? @db.Timestamptz
+  checkedBy String? @db.VarChar(50)
+  events ReleaseEvent[]
+  @@index([releaseId, phase, sortOrder])
+}
+model ReleaseEvent {
+  id String @id @default(uuid()) @db.Uuid
+  releaseId String @db.Uuid
+  release Release @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  itemId String? @db.Uuid
+  item ReleaseItem? @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  type EventType
+  actorId String @db.VarChar(50)
+  before Json?
+  after Json?
+  createdAt DateTime @default(now()) @db.Timestamptz
+  @@index([releaseId, createdAt, id])
+}
