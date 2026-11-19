@@ -1,0 +1,1 @@
+import './globals.css';export const metadata={title:'Release Check',description:'교육용 배포 점검 앱'};export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="ko"><body>{children}</body></html>}
